@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Datasets and training artifacts (regeneratable)
+tsr_train/data/
+tsr_train/runs/
+tsr_train/Reference/
+
+# .NET / C#
+bin/
+obj/
+*.user
+*.suo
+*.userprefs
+.vs/
+*.cache
+
+# Published app build (regeneratable via `dotnet publish`)
+TsrApp/publish/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
