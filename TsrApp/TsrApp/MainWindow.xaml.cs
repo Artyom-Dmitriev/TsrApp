@@ -8,7 +8,9 @@ namespace TsrApp
         public MainWindow()
         {
             InitializeComponent();
-            DataContext = new MainViewModel();
+            var vm = new MainViewModel();
+            DataContext = vm;
+            Closed += (_, _) => vm.Dispose();
         }
     }
 }

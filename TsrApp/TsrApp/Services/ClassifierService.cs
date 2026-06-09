@@ -2,6 +2,8 @@ using System.IO;
 using System.Text.Json;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 
 namespace TsrApp.Services;
 
@@ -35,6 +37,18 @@ public sealed class ClassifierService : IDisposable
     public PredictionResult Predict(string imagePath)
     {
         float[] input = _preprocessor.LoadAndPreprocess(imagePath);
+        return PredictFromInput(input);
+    }
+
+    public PredictionResult Predict(Image<Rgb24> crop)
+    {
+        // Does not dispose the caller's crop; Preprocess works on a clone.
+        float[] input = _preprocessor.Preprocess(crop);
+        return PredictFromInput(input);
+    }
+
+    private PredictionResult PredictFromInput(float[] input)
+    {
         float[] logits = RunModel(input);
         float[] probs = Softmax(logits);
 

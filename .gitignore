@@ -14,6 +14,15 @@ tsr_train/data/
 tsr_train/runs/
 tsr_train/Reference/
 
+# Detector dataset / training artifacts (huge; regeneratable via detector scripts).
+# detector.onnx already ships in TsrApp/Assets, so exports/ is not committed.
+tsr_train/detector/data/
+tsr_train/detector/runs/
+tsr_train/detector/exports/
+
+# Model weights (detector.onnx ships in Assets; .pt are regeneratable)
+*.pt
+
 # .NET / C#
 bin/
 obj/
@@ -25,6 +34,9 @@ obj/
 
 # Published app build (regeneratable via `dotnet publish`)
 TsrApp/publish/
+
+# Runtime prediction log (per-machine, not source)
+predictions_log.csv
 
 # IDE
 .idea/

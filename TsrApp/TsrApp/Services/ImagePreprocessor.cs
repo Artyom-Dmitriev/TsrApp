@@ -13,12 +13,19 @@ public sealed class ImagePreprocessor
     public float[] LoadAndPreprocess(string path)
     {
         using Image<Rgb24> image = Image.Load<Rgb24>(path);
-        image.Mutate(ctx => ctx.Resize(Size, Size, KnownResamplers.Triangle));
+        return Preprocess(image);
+    }
+
+    public float[] Preprocess(Image<Rgb24> image)
+    {
+        // Work on a clone so the caller's image is neither mutated nor disposed
+        // (it may be a crop owned by the caller / detector pipeline).
+        using Image<Rgb24> resized = image.Clone(ctx => ctx.Resize(Size, Size, KnownResamplers.Triangle));
 
         float[] data = new float[3 * Size * Size];
         int plane = Size * Size;
 
-        image.ProcessPixelRows(accessor =>
+        resized.ProcessPixelRows(accessor =>
         {
             for (int y = 0; y < Size; y++)
             {
