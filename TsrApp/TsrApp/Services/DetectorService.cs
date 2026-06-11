@@ -23,8 +23,20 @@ public sealed class DetectorService : IDisposable
 
     public DetectorService(string modelPath)
     {
-        _session = new InferenceSession(modelPath);
+        // Two sessions (detector + classifier) share one CPU: split the cores and
+        // stop idle intra-op threads from spin-waiting so the pools don't fight.
+        using var options = new SessionOptions();
+        options.IntraOpNumThreads = Math.Max(1, Environment.ProcessorCount / 2);
+        options.AddSessionConfigEntry("session.intra_op.allow_spinning", "0");
+        _session = new InferenceSession(modelPath, options);
         _inputName = _session.InputMetadata.Keys.First();
+    }
+
+    /// <summary>Runs one dummy inference so the first real frame isn't cold.</summary>
+    public void Warmup()
+    {
+        using var dummy = new Image<Rgb24>(ImgSz, ImgSz);
+        Detect(dummy);
     }
 
     public IReadOnlyList<DetectorBox> Detect(

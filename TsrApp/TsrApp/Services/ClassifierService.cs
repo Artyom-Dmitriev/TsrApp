@@ -24,7 +24,12 @@ public sealed class ClassifierService : IDisposable
 
     public ClassifierService(string modelPath, string labelsPath)
     {
-        _session = new InferenceSession(modelPath);
+        // Two sessions (detector + classifier) share one CPU: split the cores and
+        // stop idle intra-op threads from spin-waiting so the pools don't fight.
+        using var options = new SessionOptions();
+        options.IntraOpNumThreads = Math.Max(1, Environment.ProcessorCount / 2);
+        options.AddSessionConfigEntry("session.intra_op.allow_spinning", "0");
+        _session = new InferenceSession(modelPath, options);
 
         string json = File.ReadAllText(labelsPath);
         var raw = JsonSerializer.Deserialize<Dictionary<string, string>>(json)
@@ -32,6 +37,13 @@ public sealed class ClassifierService : IDisposable
         _labels = raw.ToDictionary(kv => int.Parse(kv.Key), kv => kv.Value);
 
         _preprocessor = new ImagePreprocessor();
+    }
+
+    /// <summary>Runs one dummy inference so the first real frame isn't cold.</summary>
+    public void Warmup()
+    {
+        using var dummy = new Image<Rgb24>(Size, Size);
+        Predict(dummy);
     }
 
     public PredictionResult Predict(string imagePath)

@@ -30,10 +30,12 @@ public sealed class PredictionLogger
     }
 
     /// <summary>
-    /// One-time upgrade of a pre-existing 5-column log to the new 9-column
-    /// schema. Old rows are preserved with the new fields left empty. Without
-    /// this, appending 9-field rows under a 5-column header would corrupt the
-    /// CSV. Idempotent: a log that already has the new header is left untouched.
+    /// One-time upgrade of any pre-existing log (the original 5-column schema, or
+    /// the milestone-3 9-column one) to the current schema. Old rows are read
+    /// tolerantly and rewritten under the full header, with the new fields left
+    /// empty. Without this, appending rows with more fields than the header would
+    /// corrupt the CSV. Idempotent: keyed on the newest column, so a log already
+    /// on the current schema is left untouched.
     /// </summary>
     private void MigrateIfNeeded()
     {
@@ -46,7 +48,7 @@ public sealed class PredictionLogger
                 header = reader.ReadLine();
 
             if (header is null) return;                  // empty file
-            if (header.Contains("Mode")) return;         // already new schema
+            if (header.Contains("TrackId")) return;      // already current schema
 
             List<PredictionLogEntry> records;
             using (var reader = new StreamReader(_path))

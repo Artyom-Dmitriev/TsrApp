@@ -49,6 +49,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<PredictionLogEntry> History { get; } = new();
 
+    // Video tab has its own ViewModel/service; bound via {Binding Video.…}.
+    // Shares the (stateless, thread-safe) pipeline; inference runs off-thread.
+    public VideoViewModel Video { get; }
+
     public MainViewModel()
     {
         string baseDir = AppDomain.CurrentDomain.BaseDirectory;
@@ -58,6 +62,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _detector = new DetectorService(Path.Combine(baseDir, "Assets", "detector.onnx"));
         _pipeline = new PipelineService(_detector, _classifier);
         _logger = new PredictionLogger(Path.Combine(baseDir, "predictions_log.csv"));
+        Video = new VideoViewModel(_pipeline);
+        // Closed video tracks are logged + shown in history (raised on the UI thread).
+        Video.EntryLogged += LogDetection;
 
         foreach (var e in _logger.ReadAll().OrderByDescending(x => x.Timestamp))
             History.Add(e);
@@ -205,6 +212,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        Video.Dispose();
         _detector.Dispose();
         _classifier.Dispose();
     }

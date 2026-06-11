@@ -1,9 +1,16 @@
+using System.Diagnostics;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using TsrApp.Models;
 
 namespace TsrApp.Services;
+
+/// <summary>Per-frame stage timings, for instrumentation of the video pipeline.</summary>
+public readonly record struct PipelineTimings(
+    double DetectorMs,
+    double ClassifierMs,
+    int ClassifiedCount);
 
 /// <summary>
 /// Two-stage orchestrator: YOLO detector finds sign boxes, then each box is
@@ -21,21 +28,46 @@ public sealed class PipelineService
         _classifier = classifier;
     }
 
-    public IReadOnlyList<DetectedSign> Process(Image<Rgb24> frame, float pad = 0.15f)
+    /// <summary>Warms up both sessions with one dummy inference each.</summary>
+    public void Warmup()
     {
-        IReadOnlyList<DetectorBox> boxes = _detector.Detect(frame);
-        if (boxes.Count == 0)
-            return Array.Empty<DetectedSign>(); // no signs found is a normal case
+        _detector.Warmup();
+        _classifier.Warmup();
+    }
 
+    public IReadOnlyList<DetectedSign> Process(Image<Rgb24> frame, float pad = 0.15f)
+        => Process(frame, out _, pad);
+
+    /// <summary>
+    /// Same as <see cref="Process(Image{Rgb24}, float)"/> but also reports the
+    /// detector and (summed) classifier time for the frame plus how many boxes
+    /// were classified. For instrumentation only — no behavioural change.
+    /// </summary>
+    public IReadOnlyList<DetectedSign> Process(Image<Rgb24> frame, out PipelineTimings timings, float pad = 0.15f)
+    {
+        var detSw = Stopwatch.StartNew();
+        IReadOnlyList<DetectorBox> boxes = _detector.Detect(frame);
+        double detMs = detSw.Elapsed.TotalMilliseconds;
+
+        if (boxes.Count == 0)
+        {
+            timings = new PipelineTimings(detMs, 0, 0);
+            return Array.Empty<DetectedSign>(); // no signs found is a normal case
+        }
+
+        double clsMs = 0;
         var signs = new List<DetectedSign>(boxes.Count);
         foreach (DetectorBox box in boxes)
         {
             Rectangle rect = BuildSquareCrop(box, frame.Width, frame.Height, pad);
             using Image<Rgb24> crop = frame.Clone(c => c.Crop(rect));
+            var clsSw = Stopwatch.StartNew();
             PredictionResult cls = _classifier.Predict(crop);
+            clsMs += clsSw.Elapsed.TotalMilliseconds;
             signs.Add(new DetectedSign(box, cls.ClassId, cls.ClassName, cls.Confidence, box.Score));
         }
 
+        timings = new PipelineTimings(detMs, clsMs, boxes.Count);
         return signs;
     }
 

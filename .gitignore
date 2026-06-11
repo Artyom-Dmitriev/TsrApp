@@ -34,6 +34,10 @@ obj/
 
 # Published app build (regeneratable via `dotnet publish`)
 TsrApp/publish/
+TsrApp/publish.rar
+
+# Sample / input videos (large binaries, not source)
+видео для Tsr_app/
 
 # Runtime prediction log (per-machine, not source)
 predictions_log.csv
