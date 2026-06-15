@@ -78,6 +78,11 @@ public partial class VideoViewModel : ObservableObject, IDisposable
     private readonly RollingAverage _totalAvg = new(TimingWindow);
     private string _timingText = ""; // set on the UI thread, read in UpdateStatus
 
+    // --- Offline export ---
+    private readonly VideoExportService _exporter;
+    private CancellationTokenSource? _exportCts;
+    private Task? _exportTask;
+
     private string? _currentPath;
     private string _stateNote = "";
     private bool _disposed;
@@ -110,6 +115,16 @@ public partial class VideoViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _statusText = "";
 
     [ObservableProperty] private bool _isInferenceEnabled;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ExportWithOverlayCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CancelExportCommand))]
+    [NotifyCanExecuteChangedFor(nameof(PlayCommand))]
+    [NotifyCanExecuteChangedFor(nameof(OpenVideoCommand))]
+    private bool _isExporting;
+
+    [ObservableProperty] private int _exportCurrent;
+    [ObservableProperty] private int _exportTotal;
 
     private sealed record InferenceResult(int Generation, IReadOnlyList<SignTrack> Tracks);
 
@@ -149,12 +164,14 @@ public partial class VideoViewModel : ObservableObject, IDisposable
     [NotifyCanExecuteChangedFor(nameof(PlayCommand))]
     [NotifyCanExecuteChangedFor(nameof(PauseCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ExportWithOverlayCommand))]
     private bool _isFileOpen;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(PlayCommand))]
     [NotifyCanExecuteChangedFor(nameof(PauseCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ExportWithOverlayCommand))]
     private bool _isPlaying;
 
     [ObservableProperty]
@@ -166,13 +183,14 @@ public partial class VideoViewModel : ObservableObject, IDisposable
     public VideoViewModel(PipelineService pipeline)
     {
         _pipeline = pipeline;
+        _exporter = new VideoExportService(pipeline);
         _service = new VideoPlaybackService();
         _service.FrameReady += OnFrameReady;
         _service.PlaybackCompleted += OnPlaybackCompleted;
         UpdateStatus();
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanOpenVideo))]
     private void OpenVideo()
     {
         var dlg = new OpenFileDialog
@@ -209,6 +227,8 @@ public partial class VideoViewModel : ObservableObject, IDisposable
         UpdateStatus();
     }
 
+    private bool CanOpenVideo() => !IsExporting;
+
     [RelayCommand(CanExecute = nameof(CanPlay))]
     private void Play()
     {
@@ -220,7 +240,7 @@ public partial class VideoViewModel : ObservableObject, IDisposable
         UpdateStatus();
     }
 
-    private bool CanPlay() => IsFileOpen && !IsPlaying;
+    private bool CanPlay() => IsFileOpen && !IsPlaying && !IsExporting;
 
     [RelayCommand(CanExecute = nameof(CanPause))]
     private void Pause()
@@ -274,6 +294,71 @@ public partial class VideoViewModel : ObservableObject, IDisposable
         CurrentFrameIndex = -1;
         _latestFrameIndex = -1;
     }
+
+    [RelayCommand(CanExecute = nameof(CanExport))]
+    private async Task ExportWithOverlayAsync()
+    {
+        if (_currentPath is null) return;
+
+        var dlg = new SaveFileDialog
+        {
+            Title = "Экспорт видео с разметкой",
+            Filter = "Видео MP4 (*.mp4)|*.mp4",
+            FileName = Path.GetFileNameWithoutExtension(_currentPath) + "_annotated.mp4",
+            DefaultExt = ".mp4",
+        };
+        if (dlg.ShowDialog() != true) return;
+
+        string input = _currentPath;
+        string output = dlg.FileName;
+        _exportCts = new CancellationTokenSource();
+        CancellationToken token = _exportCts.Token;
+
+        IsExporting = true;
+        ExportCurrent = 0;
+        ExportTotal = TotalFrames;
+        _stateNote = "экспорт…";
+        UpdateStatus();
+
+        var progress = new Progress<ExportProgress>(p =>
+        {
+            ExportCurrent = p.Current;
+            if (p.Total > 0) ExportTotal = p.Total;
+            UpdateStatus();
+        });
+
+        try
+        {
+            _exportTask = Task.Run(() => _exporter.Export(input, output, progress, token), token);
+            await _exportTask;
+            _stateNote = "экспорт завершён";
+        }
+        catch (OperationCanceledException)
+        {
+            _stateNote = "экспорт отменён";
+        }
+        catch (Exception ex)
+        {
+            _stateNote = "ошибка экспорта";
+            System.Windows.MessageBox.Show($"Не удалось экспортировать видео:\n{ex.Message}",
+                "Ошибка экспорта", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
+        }
+        finally
+        {
+            _exportTask = null;
+            _exportCts.Dispose();
+            _exportCts = null;
+            IsExporting = false;
+            UpdateStatus();
+        }
+    }
+
+    private bool CanExport() => IsFileOpen && !IsPlaying && !IsExporting;
+
+    [RelayCommand(CanExecute = nameof(CanCancelExport))]
+    private void CancelExport() => _exportCts?.Cancel();
+
+    private bool CanCancelExport() => IsExporting;
 
     /// <summary>
     /// Runs on the decode thread. Per the <see cref="VideoPlaybackService.FrameReady"/>
@@ -631,13 +716,21 @@ public partial class VideoViewModel : ObservableObject, IDisposable
         string note = _stateNote.Length > 0 ? $"    ·    {_stateNote}" : "";
         string infer = IsInferenceEnabled ? $"    Инференс: {InferenceFps:0.0} к/с" : "";
         string timing = (IsInferenceEnabled && _timingText.Length > 0) ? $"    {_timingText}" : "";
-        StatusText = $"{FileName}    FPS: {Fps:0.#}    Кадр: {shown} / {TotalFrames}{infer}{timing}{note}";
+        string export = IsExporting ? $"    Экспорт: кадр {ExportCurrent} из {ExportTotal}" : "";
+        StatusText = $"{FileName}    FPS: {Fps:0.#}    Кадр: {shown} / {TotalFrames}{infer}{timing}{export}{note}";
     }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+
+        // Stop an in-flight export: cancel and wait briefly for its teardown to run
+        // (it deletes the partial file). The loop checks the token every frame, and
+        // Progress.Report is non-blocking, so this returns quickly without deadlock.
+        _exportCts?.Cancel();
+        try { _exportTask?.Wait(TimeSpan.FromSeconds(5)); }
+        catch { /* cancellation / export error already handled by the command */ }
 
         StopInference();      // joins the inference thread and flushes closed tracks
         DrainClosedTracks();  // flush anything still queued so nothing is lost
